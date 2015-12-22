@@ -1,0 +1,134 @@
+---
+title: "Course Project - Practical Machine Learning"
+author: "Mohd Rizal Mohd Ramly"
+date: "December 20, 2015"
+output: html_document
+---
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+##Getting and Cleaning Data
+
+In this section, donwload the data and load into 2 destination:
+
+(1) machine-learning-training.csv - where the training dataset download and rename as training
+(2) machine-learning-testing.csv - where the testing dataset download and rename as testing
+
+```{r}
+setwd("C:/Users/MohdRizal/Dropbox/DataScience/machine-learning/project")
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+rm(list = ls())
+if (!file.exists("machine-learning-training.csv")) {
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "machine-learning-training.csv")
+}
+if (!file.exists("machine-learning-testing.csv")) {
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "machine-learning-testing.csv")
+}
+testing <- read.csv("machine-learning-testing.csv", sep = ",", na.strings = c("", "NA"))
+training <- read.csv("machine-learning-training.csv", sep = ",", na.strings = c("", "NA"))
+```
+
+For data cleanup, I remove columns full of NAs and remove features that are not in the submit set. The features containing NAs are the variance, mean and stddev within each window for each feature. Since the submit dataset has no time-dependence, these values are useless and can be disregarded. I also remove the first 7 features since they are related to the time-series or are not numeric.
+
+```{r, echo=TRUE}
+# Remove columns full of NAs.
+features <- names(testing[,colSums(is.na(testing)) == 0])[8:59]
+# Only use features used in submit cases.
+training <- training[,c(features,"classe")]
+testing <- testing[,c(features,"problem_id")]
+dim(training)
+dim(testing)
+# First, check for covariates that have virtually no variablility.
+nzv <- nearZeroVar(training, saveMetrics=TRUE)
+nzv
+```
+
+##Partioning the training set into two
+Partioning Training data set into two data sets, 60% for myTraining, 40% for myTesting with the "classe" variable in the training set.
+We were provided with a large training set (19,622 entries) and a small testing set (20 entries). 
+```{r, echo=TRUE}
+set.seed(11776)
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ] 
+myTesting <- training[-inTrain, ]
+```
+
+##Algorithm
+
+###Classification Tree
+
+First, the "out of the box" classification tree:
+
+```{r, echo=TRUE}
+modFit <- train(myTraining$classe ~ ., data = myTraining, method="rpart")
+print(modFit, digits = 3)
+print(modFit$finalModel, digits=3)
+fancyRpartPlot(modFit$finalModel)
+# Run against testing set.
+predictions <- predict(modFit, newdata=myTraining)
+print(confusionMatrix(predictions, myTraining$classe), digits=4)
+```
+
+The accuracy rate (0.5548) is low and hoped for significant improvement by incorporating preprocessing and/or cross validation.
+
+```{r, echo=TRUE}
+# Run against testing set with preprocessing.
+set.seed(11776)
+modFit <- train(myTraining$classe ~ .,  preProcess=c("center", "scale"), data = myTraining, method="rpart")
+print(modFit, digits=3)
+set.seed(11776)
+modFit <- train(myTraining$classe ~ .,  trControl=trainControl(method = "cv", number = 4), data = myTraining, method="rpart")
+print(modFit, digits=3)
+# Train on training with both preprocessing and cross validation.
+set.seed(11776)
+modFit <- train(myTraining$classe ~ .,  preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data = myTraining, method="rpart")
+print(modFit, digits=3)
+# Run against testing with both preprocessing and cross validation.
+predictions <- predict(modFit, newdata=myTraining)
+print(confusionMatrix(predictions, myTraining$classe), digits=4)
+```
+
+The impact of incorporating both preprocessing and cross validation is similar. However, when run against the corresponding testing set, the accuracy rate was identical (0.5548) for both the "out of the box" and the preprocessing/cross validation methods.
+Since the accuracy rate (0.5548) is low, I try to improve by incorporating preprocessing and/or cross validation.
+
+##Random Forest
+
+In order to get higher accuracy, the random forest will include preprocessing and cross validation.
+```{r, echo=TRUE}
+# Train on training set 1 of 4 with only both preprocessing and cross validation.
+set.seed(11776)
+modFit <- train(myTraining$classe ~ ., method="rf", data=myTraining)
+print(modFit, digits=3)
+# Run against testing set.
+predictions <- predict(modFit, newdata=myTraining)
+print(confusionMatrix(predictions, myTraining$classe), digits=4)
+```
+
+##Random Forests yielded better Results, as expected!
+###Submission
+
+Generating Files to submit as answers for the Assignment: Finally, using the provided Test Set out-of-sample error.
+
+For Random Forests we use the following formula, which yielded a much better prediction in in-sample:
+
+```{r, echo=TRUE}
+# Run against 20 testing set provided by Professor Leek.
+answers <- predict(modFit, newdata=testing)
+
+#Function to generate files with predictions to submit for assignment
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
+```
